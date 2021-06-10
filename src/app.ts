@@ -7,10 +7,16 @@ import {drawerImageData, sendImageData} from './socketEventsTypes'
 import * as Room from './rooms'
 const app = express();
 
-const roundTimer = 100000;
-const maxPlayerInRoom = 4;
+const roundTimer = 30000;
+const maxPlayerInRoom = 10;
 
 const httpServer = createServer(app);
+
+const words = ['octopus', 'buet', 'cse', 'genius', 'psa', 'legend']
+
+function getRandomWord():string{
+    return words[Math.floor(Math.random() * (words.length - 1))];
+}
 
 
 const io = new Server(httpServer , {
@@ -43,7 +49,8 @@ function createNewRoom(socket : Socket){
     Room.roomMap[newRoomId] = {
         members : [socket.id],
         drawer : socket.id,
-        startingTIme : Date.now()
+        startingTIme : Date.now(),
+        word : null
     }
     Room.socketToRoomIdMap[socket.id] = newRoomId;
     socket.join(newRoomId);
@@ -79,21 +86,41 @@ function deleteElement(arr : [any] , val : any){
 }
 
 function changeDrawerSocketEvent(oldDrawer : string , newDrawer : string){
+    delete Room.wordsGiven[oldDrawer];
     io.to(oldDrawer).emit('newDrawer',{
-        newDrawer : newDrawer
+        newDrawer : newDrawer,
     })
+    let words = [getRandomWord(), getRandomWord(),getRandomWord()];
     io.to(newDrawer).emit('selfDrawer',{
         oldDrawer : oldDrawer,
-        newDrawer : newDrawer
+        newDrawer : newDrawer,
+        words : words
     })
+    Room.wordsGiven[newDrawer] = words;
+    const room = Room.roomMap[Room.socketToRoomIdMap[newDrawer]];
+    setTimeout(()=>{
+        if(!room.word){
+            room.word = words[0];
+            io.to(newDrawer).emit('chosenWord',{
+                word : words[0]
+            })
+            
+            io.to(Room.roomMap[Room.socketToRoomIdMap[newDrawer]].members.filter(id => id != newDrawer))
+            .emit('chosenWordLenght',{
+                length : words[0].length
+            })
+        }
+    }, 2000);
     
 }
+
 
 function changeDrawer(socketId : string, roomId : string){
     try{
         console.log( 'in room' +  roomId);
         const room = Room.roomMap[roomId];
         const members = room.members;
+        room.word = null;
         deleteElement(members, socketId);
         members.push(socketId);
         room.drawer = members[0];
@@ -190,6 +217,22 @@ io.on('connection',(socket)=>{
     socket.on('drawEvent',data=>{
         if(Room.roomMap[Room.socketToRoomIdMap[socket.id]].drawer === socket.id)
             socket.broadcast.to(Room.socketToRoomIdMap[socket.id]).emit('drawEvent', data);
+    })
+
+    socket.on('chosenWord', data=>{
+        
+        const room = Room.roomMap[Room.socketToRoomIdMap[socket.id]];
+        if(room.drawer === socket.id && room.word === null && 
+            Room.wordsGiven[socket.id].some(word => word === data.word)){
+            room.word = data.word;
+            delete Room.wordsGiven[socket.id];
+            io.to(socket.id).emit('chosenWord',{
+                word : data.word
+            })
+            socket.broadcast.to(Room.socketToRoomIdMap[socket.id]).emit('chosenWordLenght',{
+                length : data.word.length
+            })
+        }
     })
 })
 

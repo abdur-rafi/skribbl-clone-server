@@ -7,6 +7,7 @@ export type room = {
    members : [string],
    drawer : string | null,
    startingTIme : number,
+   word : string | null
 }
 
 export interface gameRooms {
@@ -41,4 +42,12 @@ interface socketToInfoMap  {
 
 export let socketToInfoMap : socketToInfoMap = {
 
+}
+
+interface wordsGiven{
+    [key : string] : string[]
+}
+
+export let wordsGiven : wordsGiven = {
+    
 }
