@@ -1,11 +1,14 @@
 import express from 'express';
 import {createServer} from 'http';
 import {Server , Socket} from 'socket.io';
-import {localUrl, hostedUrl,roundTimer} from '../constants'
+import {localUrl, hostedUrl} from '../constants'
 import {v4 as uuid} from 'uuid'
 import {drawerImageData, sendImageData} from './socketEventsTypes'
 import * as Room from './rooms'
 const app = express();
+
+const roundTimer = 100000;
+const maxPlayerInRoom = 4;
 
 const httpServer = createServer(app);
 
@@ -18,6 +21,20 @@ const io = new Server(httpServer , {
     transports : ['websocket']
 });
 
+function emitPlayers(roomId : string){
+    const members = Room.roomMap[roomId].members;
+    io.in(roomId).emit('updatePlayers', {
+        players : members.map(m =>{
+            return Room.socketToInfoMap[m]
+        })
+    });
+}
+
+function emitDrawer(d : string, roomId : string){
+    io.in(roomId).emit('updateDrawer', {
+        drawer : Room.socketToInfoMap[d]
+    })
+}
 // console.log(uuid());
 
 function createNewRoom(socket : Socket){
@@ -31,6 +48,7 @@ function createNewRoom(socket : Socket){
     Room.socketToRoomIdMap[socket.id] = newRoomId;
     socket.join(newRoomId);
     Room.roomCount['count'] += 1;
+    emitPlayers(newRoomId);
 }
 
 function removeAPlayer(socket : Socket, roomId : string){
@@ -38,6 +56,7 @@ function removeAPlayer(socket : Socket, roomId : string){
     // room.members.delete(socket.id);
     deleteElement(room.members, socket.id);
     if(room.members.length){
+        emitPlayers(roomId);
         if(room.drawer === socket.id){
             let f = room.members.values().next();
             room.drawer = f.value;
@@ -64,8 +83,10 @@ function changeDrawerSocketEvent(oldDrawer : string , newDrawer : string){
         newDrawer : newDrawer
     })
     io.to(newDrawer).emit('selfDrawer',{
-        oldDrawer : oldDrawer
+        oldDrawer : oldDrawer,
+        newDrawer : newDrawer
     })
+    
 }
 
 function changeDrawer(socketId : string, roomId : string){
@@ -78,10 +99,11 @@ function changeDrawer(socketId : string, roomId : string){
         room.drawer = members[0];
         // Room.roomMap[roomId].drawer = Room.roomMap[roomId].members[0];
         changeDrawerSocketEvent(socketId, members[0]);
+        emitDrawer(room.drawer, roomId);
         if(members.length > 1){
             setTimeout(()=>{
                 changeDrawer(room.drawer!, roomId);
-            }, 10000);
+            }, roundTimer);
         }
     }
     catch(err){
@@ -103,14 +125,16 @@ function addToRoom(socket : Socket, roomId : string){
     io.to(Room.roomMap[roomId].drawer!).emit('sendImageData', sendImageData({
         to : socket.id
     }));
+    emitPlayers(roomId);
 }
 
 function findEmptyRoom():string | null{
     let itr = Room.roomIdList.values();
     let roomId : string | null = null;
+    console.log(maxPlayerInRoom);
     for(let i = 0; i < Room.roomIdList.size; ++i){
         let val = itr.next().value;
-        if(Room.roomMap[val] && Room.roomMap[val].members.length < 2){
+        if(Room.roomMap[val] && Room.roomMap[val].members.length < maxPlayerInRoom ){
             roomId = val;
         }
     }
@@ -119,10 +143,15 @@ function findEmptyRoom():string | null{
 }
 
 io.on('connection',(socket)=>{
+    console.log(socket.handshake.query.userName);
     // console.log('connected');
 
     let roomId = findEmptyRoom();
-    
+
+    Room.socketToInfoMap[socket.id] = {
+        socketId : socket.id,
+        userName : socket.handshake.query.userName as string
+    }
     if(!roomId){
         console.log('creating room');
         createNewRoom(socket);
@@ -135,6 +164,16 @@ io.on('connection',(socket)=>{
     socket.on('drawerImageData', (data : drawerImageData)=>{
         if(Room.roomMap[Room.socketToRoomIdMap[socket.id]].members.some( id => id === data.to)){
             io.to(data.to).emit('drawerImageData', data);
+        }
+    })
+
+    socket.on('message', data=>{
+        const roomId = Room.socketToRoomIdMap[socket.id];
+        if(roomId){
+            io.in(roomId).emit('message', {
+                message : data.message, 
+                sender : Room.socketToInfoMap[socket.id]
+            })
         }
     })
 
@@ -155,7 +194,7 @@ io.on('connection',(socket)=>{
 })
 
 app.get('/', (req, res) => {
-    res.send('Well sdfdone!');
+    res.send('Well done!');
 })
 
 httpServer.listen(process.env.PORT || '3001', () => {

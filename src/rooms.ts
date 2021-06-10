@@ -34,3 +34,11 @@ export let roomMap : gameRooms = {
 export let socketToRoomIdMap : roomIdToSocketMap = {
 
 }
+
+interface socketToInfoMap  {
+    [key : string] : player
+}
+
+export let socketToInfoMap : socketToInfoMap = {
+
+}
