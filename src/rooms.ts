@@ -4,10 +4,17 @@ export type player = {
 }
 
 export type room = {
-   members : [string],
+   members : {
+       socketId : string,
+       score : number,
+       userName : string,
+       hasGuessed : boolean
+   } [],
    drawer : string | null,
    startingTIme : number,
-   word : string | null
+   word : string | null,
+   turnId : string | null,
+   guessedCount : number
 }
 
 export interface gameRooms {
