@@ -7,9 +7,9 @@ import {drawerImageData, sendImageData} from './socketEventsTypes'
 import * as Room from './rooms'
 const app = express();
 
-const roundTimer = 30000;
+const roundTimer = 50000;
 const maxPlayerInRoom = 10;
-const timeDelay = 5000;
+const timeDelay = 7000;
 
 const httpServer = createServer(app);
 
@@ -91,7 +91,7 @@ function deleteElement(arr : [any] , val : any){
 
 function changeDrawerSocketEvent(oldDrawer : string , newDrawer : string){
     delete Room.wordsGiven[oldDrawer];
-    io.to(oldDrawer).emit('newDrawer',{
+    io.to(Room.socketToRoomIdMap[oldDrawer]).emit('newDrawer',{
         newDrawer : newDrawer,
     })
     let words = [getRandomWord(), getRandomWord(),getRandomWord()];
@@ -154,9 +154,13 @@ function groupMemberComp(a : any, b : any){
     return a.socketId === b.socketId;
 }
 
+function resetMembers(room:Room.room){
+    room.members.forEach(m=>m.hasGuessed=false);
+}
+
 function changeDrawer(socketId : string, roomId : string, turnId : string){
     try{
-        console.log( 'in room' +  roomId);
+        // console.log( 'in room' +  roomId);
         const room = Room.roomMap[roomId];
         if(turnId != room.turnId){
             return;
@@ -166,6 +170,7 @@ function changeDrawer(socketId : string, roomId : string, turnId : string){
         let index = getIndex(room.members, {socketId : socketId}, groupMemberComp);
         // deleteElement(members, socketId);
         let member = room.members[index];
+        resetMembers(room);
         deleteUsingComp(members, {socketId : socketId},(a, b)=>a.socketId === b.socketId);
         members.push(member);
         room.drawer = members[0].socketId;
@@ -196,7 +201,7 @@ function addToRoom(socket : Socket, roomId : string, userName : string){
     //         changeDrawer(socket.id, roomId, turnId);
     //     }, 1);
     // }
-    console.log(roomId);
+    // console.log(roomId);
     socket.join(roomId);
     Room.roomMap[roomId].members.push({ socketId : socket.id, userName : userName, score : 0, hasGuessed : false});
     Room.socketToRoomIdMap[socket.id] = roomId;
@@ -212,7 +217,7 @@ function addToRoom(socket : Socket, roomId : string, userName : string){
 function findEmptyRoom():string | null{
     let itr = Room.roomIdList.values();
     let roomId : string | null = null;
-    console.log(maxPlayerInRoom);
+    // console.log(maxPlayerInRoom);
     for(let i = 0; i < Room.roomIdList.size; ++i){
         let val = itr.next().value;
         if(Room.roomMap[val] && Room.roomMap[val].members.length < maxPlayerInRoom ){
@@ -226,7 +231,7 @@ function findEmptyRoom():string | null{
 function setChangeDrawerCallback(drawer: string,roomId : string, time : number){
     // console.log(Room.socketToRoomIdMap[drawer]);
     const room = Room.roomMap[roomId];
-    console.log(room);
+    // console.log(room);
     if(!room){
         console.log("room is undefinded in setChangeDrawerCallback");
         return;
@@ -241,7 +246,7 @@ function setChangeDrawerCallback(drawer: string,roomId : string, time : number){
 }
 
 io.on('connection',(socket)=>{
-    console.log(socket.handshake.query.userName);
+    // console.log(socket.handshake.query.userName);
     // console.log('connected');
 
     let roomId = findEmptyRoom();
@@ -357,5 +362,5 @@ app.get('/', (req, res) => {
 })
 
 httpServer.listen(process.env.PORT || '3001', () => {
-    console.log('The application is listening on port 3000!');
+    console.log('The application is listening ');
 })
