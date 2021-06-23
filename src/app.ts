@@ -7,7 +7,7 @@ import {drawerImageData, sendImageData} from './socketEventsTypes'
 import * as Room from './rooms'
 const app = express();
 
-const roundTimer = 50000;
+const roundTimer = 10000;
 const maxPlayerInRoom = 10;
 const timeDelay = 7000;
 
@@ -46,7 +46,7 @@ function createNewRoom(socket : Socket, userName : string){
     const newRoomId = uuid();   
     Room.roomIdList.add(newRoomId);
     Room.roomMap[newRoomId] = {
-        members : [{ socketId : socket.id,userName : userName, score : 0, hasGuessed : false}],
+        members : [{ socketId : socket.id,userName : userName, score : 0, hasGuessed : false, turnScore : 0}],
         drawer : socket.id,
         startingTIme : Date.now(),
         word : null,
@@ -91,46 +91,54 @@ function deleteElement(arr : [any] , val : any){
 
 function changeDrawerSocketEvent(oldDrawer : string , newDrawer : string){
     delete Room.wordsGiven[oldDrawer];
-    io.to(Room.socketToRoomIdMap[oldDrawer]).emit('newDrawer',{
-        newDrawer : newDrawer,
-    })
-    let words = [getRandomWord(), getRandomWord(),getRandomWord()];
-    io.to(newDrawer).emit('selfDrawer',{
-        oldDrawer : oldDrawer,
-        newDrawer : newDrawer,
-        words : words
-    })
-    Room.wordsGiven[newDrawer] = words;
     const room = Room.roomMap[Room.socketToRoomIdMap[newDrawer]];
+    
+    io.to(Room.socketToRoomIdMap[oldDrawer]).emit('turnEnd',{
+        members : room.members
+    });
     setTimeout(()=>{
-        if(!room.word){
-            room.word = words[0];
-            room.startingTIme = Date.now();
-            io.to(newDrawer).emit('chosenWord',{
-                word : words[0]
-            })
-            
-            if(room.members.length > 1){
-                io.to(Room.roomMap[Room.socketToRoomIdMap[newDrawer]].members.filter(id => id.socketId != newDrawer).map(m => m.socketId))
-                .emit('chosenWordLenght',{
-                    length : words[0].length
+        io.to(Room.socketToRoomIdMap[oldDrawer]).emit('newDrawer',{
+            newDrawer : newDrawer,
+            userName : Room.socketToInfoMap[newDrawer].userName
+        })
+        let words = [getRandomWord(), getRandomWord(),getRandomWord()];
+        io.to(newDrawer).emit('selfDrawer',{
+            oldDrawer : oldDrawer,
+            newDrawer : newDrawer,
+            words : words
+        })
+        Room.wordsGiven[newDrawer] = words;
+        setTimeout(()=>{
+            if(!room.word){
+                room.word = words[0];
+                room.startingTIme = Date.now();
+                io.to(newDrawer).emit('chosenWord',{
+                    word : words[0]
                 })
+                
+                if(room.members.length > 1){
+                    io.to(Room.roomMap[Room.socketToRoomIdMap[newDrawer]].members.filter(id => id.socketId != newDrawer).map(m => m.socketId))
+                    .emit('chosenWordLenght',{
+                        length : words[0].length
+                    })
+                }
+                
+                io.to(Room.socketToRoomIdMap[newDrawer]).emit('setTimer', {
+                    time : roundTimer
+                })
+    
+                setChangeDrawerCallback(room.drawer!, Room.socketToRoomIdMap[newDrawer], roundTimer);
+                // if(room.members.length > 1){
+                //     let turnId = uuid();
+                //     room.turnId = turnId;
+                //     setTimeout(()=>{
+                //         changeDrawer(room.drawer!, Room.socketToRoomIdMap[newDrawer], turnId!);
+                //     }, roundTimer);
+                // }
             }
-            
-            io.to(Room.socketToRoomIdMap[newDrawer]).emit('setTimer', {
-                time : roundTimer
-            })
-
-            setChangeDrawerCallback(room.drawer!, Room.socketToRoomIdMap[newDrawer], roundTimer);
-            // if(room.members.length > 1){
-            //     let turnId = uuid();
-            //     room.turnId = turnId;
-            //     setTimeout(()=>{
-            //         changeDrawer(room.drawer!, Room.socketToRoomIdMap[newDrawer], turnId!);
-            //     }, roundTimer);
-            // }
-        }
-    }, timeDelay);
+        }, timeDelay);
+    }, 4000);
+    
     
 }
 
@@ -155,7 +163,10 @@ function groupMemberComp(a : any, b : any){
 }
 
 function resetMembers(room:Room.room){
-    room.members.forEach(m=>m.hasGuessed=false);
+    room.members.forEach(m=>{
+        m.hasGuessed=false;
+        m.turnScore = 0;
+    });
 }
 
 function changeDrawer(socketId : string, roomId : string, turnId : string){
@@ -168,24 +179,14 @@ function changeDrawer(socketId : string, roomId : string, turnId : string){
         const members = room.members;
         room.word = null;
         let index = getIndex(room.members, {socketId : socketId}, groupMemberComp);
-        // deleteElement(members, socketId);
-        let member = room.members[index];
-        resetMembers(room);
-        deleteUsingComp(members, {socketId : socketId},(a, b)=>a.socketId === b.socketId);
-        members.push(member);
-        room.drawer = members[0].socketId;
-        // Room.roomMap[roomId].drawer = Room.roomMap[roomId].members[0];
-        // let turnIdNew = uuid();
-        // room.turnId = turnIdNew;
-        // room.startingTIme = Date.now();
+        // let member = room.members[index];
+        // deleteUsingComp(members, {socketId : socketId},(a, b)=>a.socketId === b.socketId);
+        // members.push(member);
+        room.drawer = members[(index + 1) % members.length].socketId;
         room.guessedCount = 0;
-        changeDrawerSocketEvent(socketId, members[0].socketId);
-        emitDrawer(room.drawer, roomId);
-        // if(members.length > 1){
-        //     setTimeout(()=>{
-        //         changeDrawer(room.drawer!, roomId, turnIdNew);
-        //     }, roundTimer);
-        // }
+        changeDrawerSocketEvent(socketId, room.drawer);
+        resetMembers(room);
+        // emitDrawer(room.drawer, roomId);
     }
     catch(err){
         console.log(err);
@@ -203,7 +204,7 @@ function addToRoom(socket : Socket, roomId : string, userName : string){
     // }
     // console.log(roomId);
     socket.join(roomId);
-    Room.roomMap[roomId].members.push({ socketId : socket.id, userName : userName, score : 0, hasGuessed : false});
+    Room.roomMap[roomId].members.push({ socketId : socket.id, userName : userName, score : 0, hasGuessed : false, turnScore : 0});
     Room.socketToRoomIdMap[socket.id] = roomId;
     if(Room.roomMap[roomId].members.length === 2){
         setChangeDrawerCallback(socket.id, roomId, 1);
@@ -283,6 +284,7 @@ io.on('connection',(socket)=>{
                         if(room.members[i].hasGuessed)
                             break;
                         room.members[i].score += 10;
+                        room.members[i].turnScore = 10;
                         room.members[i].hasGuessed = true;
                         data.message = 'guessed correctly'
                         room.guessedCount += 1;
@@ -290,18 +292,11 @@ io.on('connection',(socket)=>{
                             let timeDelta = Date.now() - room.startingTIme;
                             let gap = roundTimer - timeDelta;
                             setChangeDrawerCallback(room.drawer!, roomId, gap / 2);
-                            // let turnId = uuid();
-                            // room.turnId = turnId;
-                            // setTimeout( ()=>{
-                            //     changeDrawer(room.drawer!, roomId,turnId!)
-                            // },gap / 2);
                             io.to(roomId).emit('setTimer', {
                                 time : gap / 2
                             })
                         }
-                        
-                        
-                        emitPlayers(roomId);
+                        // emitPlayers(roomId);
                         break;
                     }
                 }
@@ -329,10 +324,12 @@ io.on('connection',(socket)=>{
     })
 
     socket.on('chosenWord', data=>{
+        console.log(data);
         
         const room = Room.roomMap[Room.socketToRoomIdMap[socket.id]];
         if(room.drawer === socket.id && room.word === null && 
             Room.wordsGiven[socket.id].some(word => word === data.word)){
+            console.log('here');
             room.startingTIme = Date.now();
             room.word = data.word;
             delete Room.wordsGiven[socket.id];

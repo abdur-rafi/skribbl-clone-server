@@ -8,7 +8,8 @@ export type room = {
        socketId : string,
        score : number,
        userName : string,
-       hasGuessed : boolean
+       hasGuessed : boolean,
+       turnScore : number
    } [],
    drawer : string | null,
    startingTIme : number,
