@@ -9,8 +9,10 @@ const app = express();
 
 const roundTimer = 20000;
 const maxPlayerInRoom = 10;
-const timeDelay = 7000;
-
+const timeForChoosingWord = 3000;
+const delayAfterRoundEnd = 3000;
+const delayAfterGameEnd = 3000;
+const maxRounds = 0;
 const httpServer = createServer(app);
 
 const words = ['octopus', 'buet', 'cse', 'genius', 'psa', 'legend']
@@ -18,7 +20,6 @@ const words = ['octopus', 'buet', 'cse', 'genius', 'psa', 'legend']
 function getRandomWord():string{
     return words[Math.floor(Math.random() * (words.length - 1))];
 }
-
 
 const io = new Server(httpServer , {
     cors : {
@@ -35,25 +36,19 @@ function emitPlayers(roomId : string){
     });
 }
 
-function emitDrawer(d : string, roomId : string){
-    io.in(roomId).emit('updateDrawer', {
-        drawer : Room.socketToInfoMap[d]
-    })
-}
-// console.log(uuid());
 
 function createNewRoom(socket : Socket, userName : string){
     const newRoomId = uuid();   
     Room.roomIdList.add(newRoomId);
     Room.roomMap[newRoomId] = {
         members : [{ socketId : socket.id,userName : userName, score : 0, hasGuessed : false, turnScore : 0,}],
-        drawer : socket.id,
+        drawer : null,
         startingTIme : Date.now(),
         word : null,
         turnId : null,
         guessedCount : 0,
         round : 0,
-        maxRounds : 3
+        maxRounds : maxRounds
     }
     Room.socketToRoomIdMap[socket.id] = newRoomId;
     socket.join(newRoomId);
@@ -65,8 +60,6 @@ function createNewRoom(socket : Socket, userName : string){
 
 function removeAPlayer(socket : Socket, roomId : string){
     const room = Room.roomMap[roomId];
-    // room.members.delete(socket.id);
-    // deleteElement(room.members, socket.id);
     deleteUsingComp(room.members, {socketId : socket.id},groupMemberComp);
     if(room.members.length){
         emitPlayers(roomId);
@@ -91,51 +84,6 @@ function deleteElement(arr : [any] , val : any){
     arr.splice(arr.indexOf(val), 1);
 }
 
-function changeDrawerSocketEvent(oldDrawer : string , newDrawer : string){
-    delete Room.wordsGiven[oldDrawer];
-    const room = Room.roomMap[Room.socketToRoomIdMap[newDrawer]];
-    
-    io.to(Room.socketToRoomIdMap[oldDrawer]).emit('turnEnd',{
-        members : room.members
-    });
-    setTimeout(()=>{
-        io.to(Room.socketToRoomIdMap[oldDrawer]).emit('newDrawer',{
-            newDrawer : newDrawer,
-            userName : Room.socketToInfoMap[newDrawer].userName
-        })
-        let words = [getRandomWord(), getRandomWord(),getRandomWord()];
-        io.to(newDrawer).emit('selfDrawer',{
-            oldDrawer : oldDrawer,
-            newDrawer : newDrawer,
-            words : words
-        })
-        Room.wordsGiven[newDrawer] = words;
-        setTimeout(()=>{
-            if(!room.word){
-                room.word = words[0];
-                room.startingTIme = Date.now();
-                io.to(newDrawer).emit('chosenWord',{
-                    word : words[0]
-                })
-                
-                if(room.members.length > 1){
-                    io.to(Room.roomMap[Room.socketToRoomIdMap[newDrawer]].members.filter(id => id.socketId != newDrawer).map(m => m.socketId))
-                    .emit('chosenWordLenght',{
-                        length : words[0].length
-                    })
-                }
-                
-                io.to(Room.socketToRoomIdMap[newDrawer]).emit('setTimer', {
-                    time : roundTimer
-                })
-    
-                setChangeDrawerCallback( Room.socketToRoomIdMap[newDrawer], roundTimer);
-            }
-        }, timeDelay);
-    }, 4000);
-    
-    
-}
 
 function deleteUsingComp(arr : any[], elem : any, comp : (a : any, b : any) => boolean){
     let di = getIndex(arr, elem, comp);
@@ -168,51 +116,152 @@ function emitResults(){
 
 }
 
-function changeDrawer(socketId : string | null, roomId : string, turnId : string){
+function resetRoom(){
+    
+}
+
+function EndGame(room : Room.room, roomId : string){
+    room.drawer = null;
+    room.guessedCount = 0;
+    room.round = 0;
+    room.startingTIme = 0;
+    room.word = null;
+    io.to(roomId).emit('endGame', {
+        members : room.members
+    })
+    room.members.forEach(m=>{
+        m.hasGuessed = false;
+        m.score = 0;
+        m.turnScore = 0;
+    })
+}
+
+function endRound(room : Room.room, roomId : string){
+    io.to(roomId).emit('roundNumber', {
+        round : room.round
+    })
+    room.round++;
+}
+
+
+
+function endTurn(room : Room.room, roomId : string){
+    io.to(roomId).emit('turnEnd',{
+        members : room.members
+    });
+    room.guessedCount = 0;
+    room.startingTIme = 0;
+    room.word = null;
+    room.members.forEach(m =>{
+        m.hasGuessed = false;
+        m.turnScore = 0;
+    })
+}
+
+function handleNewDrawer(room : Room.room, roomId : string,newDrawer : string){
+    io.to(roomId).emit('newDrawer', {
+        newDrawer : newDrawer,
+        userName : Room.socketToInfoMap[newDrawer].userName
+    })
+
+    let words = [getRandomWord(), getRandomWord(),getRandomWord()];
+    io.to(newDrawer).emit('selfDrawer',{
+        newDrawer : newDrawer,
+        words : words
+    })
+    Room.wordsGiven[newDrawer] = words;
+
+    setTimeout(()=>{
+        if(!room.word){
+            room.word = words[0];
+            room.startingTIme = Date.now();
+            io.to(newDrawer).emit('chosenWord',{
+                word : words[0]
+            })
+            if(room.members.length > 1){
+                io.to(room.members.filter(id => id.socketId != newDrawer).map(m => m.socketId))
+                .emit('chosenWordLenght',{
+                    length : words[0].length
+                })
+            }
+            io.to(Room.socketToRoomIdMap[newDrawer]).emit('setTimer', {
+                time : roundTimer
+            })
+            setChangeDrawerCallback(roomId, roundTimer);
+        }
+    }, timeForChoosingWord);
+
+}
+
+function handleOldDrawer(room : Room.room, roomId : string, oldDrawer : string){
+    delete Room.wordsGiven[oldDrawer];
+}
+
+function startTurn(room : Room.room, roomId : string){
+    let oldDrawer = room.drawer;
+    let index = getIndex(room.members, {socketId : room.drawer}, groupMemberComp);
+    if(index === 0 || index === -1){
+        index = room.members.length;
+    }
+    let newDrawer = room.members[index - 1].socketId;
+    if(oldDrawer){
+        handleOldDrawer(room, roomId, oldDrawer);
+    }
+    room.drawer = newDrawer;
+    handleNewDrawer(room, roomId, newDrawer);
+}
+
+function startGame(room : Room.room, roomId : string){
+    console.log('start game');
+    startTurn(room, roomId);
+}
+
+
+function changeDrawer(roomId : string, turnId : string){
+    console.log("change drawer");
     try{
         const room = Room.roomMap[roomId];
-        if(turnId != room.turnId){
-            return;
-        }
+        if(turnId != room.turnId) return;
         const members = room.members;
-        if(members.length === 1){
-            return;
+        if(members.length === 1) return;
+        if(!room.drawer){
+            return startGame(room, roomId);
         }
-        
-        room.word = null;
-        let index : number;
-        if(socketId === null){
-            index = members.length;
-            room.round = 1;
-        }
-        else
-            index = getIndex(room.members, {socketId : socketId}, groupMemberComp);
+        console.log('here');
+        let index = getIndex(room.members, {socketId : room.drawer}, groupMemberComp);
         if(index == 0){
-            index = members.length;
             if(room.round === room.maxRounds){
-                room.drawer = null;
-                room.guessedCount = 0;
-                room.round = 0;
-                room.turnId = null;
-                room.startingTIme = 0;
-                io.to(roomId).emit('endGame', {
-                    members : members
-                })
-                setChangeDrawerCallback(roomId, 10000);
-                return;
+                EndGame(room, roomId);
+                // return;
+                return setChangeDrawerCallback(roomId, delayAfterGameEnd);
             }
-            io.to(roomId).emit('roundNumber', {
-                round : room.round
-            })
-            room.round++;
+            endRound(room, roomId);
         }
-        room.drawer = members[(index - 1) % members.length].socketId;
-        room.guessedCount = 0;
-        changeDrawerSocketEvent(socketId!, room.drawer);
-        resetMembers(room);
+        endTurn(room, roomId);
+        setTimeout(()=>{
+            startTurn(room, roomId);
+        }, delayAfterRoundEnd);
+
     }
     catch(err){
         console.log(err);
+    }
+}
+
+function onJoinMidGame(socket : Socket, roomId : string, room : Room.room){
+    io.to(room.drawer!).emit('sendImageData', sendImageData({
+        to : socket.id
+    }));
+    io.to(socket.id).emit('round', {
+        round : room.round
+    })
+    io.to(socket.id).emit('setTimer',{
+        time : Date.now() - room.startingTIme
+    })
+    if(room.word){
+        io.to(socket.id).emit('chosenWordLenght',{
+            length : room.word.length
+        })
     }
 }
 
@@ -225,29 +274,14 @@ function addToRoom(socket : Socket, roomId : string, userName : string){
         setChangeDrawerCallback(roomId, 1);
     }
     else{
-        io.to(room.drawer!).emit('sendImageData', sendImageData({
-            to : socket.id
-        }));
-        io.to(socket.id).emit('round', {
-            round : room.round
-        })
-        io.to(socket.id).emit('setTimer',{
-            time : Date.now() - room.startingTIme
-        })
-        if(room.word){
-            io.to(socket.id).emit('chosenWordLenght',{
-                length : room.word.length
-            })
-        }
-        emitPlayers(roomId);
-
+        onJoinMidGame(socket, roomId, room);
     }
+    emitPlayers(roomId);
 }
 
 function findEmptyRoom():string | null{
     let itr = Room.roomIdList.values();
     let roomId : string | null = null;
-    // console.log(maxPlayerInRoom);
     for(let i = 0; i < Room.roomIdList.size; ++i){
         let val = itr.next().value;
         if(Room.roomMap[val] && Room.roomMap[val].members.length < maxPlayerInRoom ){
@@ -268,14 +302,12 @@ function setChangeDrawerCallback(roomId : string, time : number){
     room.turnId = turnId;
     if(room.members.length > 1){
         setTimeout(()=>{
-            changeDrawer(room.drawer, roomId, turnId);
+            changeDrawer(roomId, turnId);
         }, time);
     }
 }
 
 io.on('connection',(socket)=>{
-    // console.log(socket.handshake.query.userName);
-    // console.log('connected');
 
     let roomId = findEmptyRoom();
 
@@ -351,8 +383,8 @@ io.on('connection',(socket)=>{
     })
 
     socket.on('chosenWord', data=>{
-        console.log(data);
-        
+        // console.log(data);
+        // console.log(Room);
         const room = Room.roomMap[Room.socketToRoomIdMap[socket.id]];
         if(room.drawer === socket.id && room.word === null && 
             Room.wordsGiven[socket.id].some(word => word === data.word)){
@@ -370,13 +402,6 @@ io.on('connection',(socket)=>{
                 time : roundTimer
             })
             setChangeDrawerCallback(Room.socketToRoomIdMap[socket.id], roundTimer);
-            // if(room.members.length > 1){
-            //     let turnId = uuid();
-            //     room.turnId = turnId;
-            //     setTimeout(()=>{
-            //         changeDrawer(room.drawer!, Room.socketToRoomIdMap[socket.id], turnId);
-            //     }, roundTimer);
-            // }
         }
     })
 })
