@@ -15,7 +15,9 @@ export type room = {
    startingTIme : number,
    word : string | null,
    turnId : string | null,
-   guessedCount : number
+   guessedCount : number,
+   round : number,
+   maxRounds : number
 }
 
 export interface gameRooms {
