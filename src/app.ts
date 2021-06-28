@@ -9,10 +9,10 @@ const app = express();
 
 const roundTimer = 20000;
 const maxPlayerInRoom = 10;
-const timeForChoosingWord = 3000;
-const delayAfterRoundEnd = 3000;
-const delayAfterGameEnd = 3000;
-const maxRounds = 0;
+const timeForChoosingWord = 5000;
+const delayAfterRoundEnd = 5000;
+const delayAfterGameEnd = 10000;
+const maxRounds = 2;
 const httpServer = createServer(app);
 
 const words = ['octopus', 'buet', 'cse', 'genius', 'psa', 'legend']
@@ -231,8 +231,12 @@ function changeDrawer(roomId : string, turnId : string){
         let index = getIndex(room.members, {socketId : room.drawer}, groupMemberComp);
         if(index == 0){
             if(room.round === room.maxRounds){
+                endTurn(room, roomId);
+                setTimeout(()=>{
+                    EndGame(room, roomId);
+
+                }, delayAfterRoundEnd);
                 EndGame(room, roomId);
-                // return;
                 return setChangeDrawerCallback(roomId, delayAfterGameEnd);
             }
             endRound(room, roomId);
@@ -307,6 +311,12 @@ function setChangeDrawerCallback(roomId : string, time : number){
     }
 }
 
+function getScore(time : number) : number{
+
+    let ratio = time / (roundTimer / 2);
+    return Math.ceil( 60 * Math.exp(ratio));
+}
+
 io.on('connection',(socket)=>{
 
     let roomId = findEmptyRoom();
@@ -338,27 +348,28 @@ io.on('connection',(socket)=>{
             const room = Room.roomMap[roomId];
             const word = room.word;
             if(data.message === word && room.drawer !== socket.id){
-                for (let i = 0; i < room.members.length ; ++i){
-                    if(room.members[i].socketId === socket.id){
-                        if(room.members[i].hasGuessed)
-                            break;
-                        room.members[i].score += 10;
-                        room.members[i].turnScore = 10;
-                        room.members[i].hasGuessed = true;
-                        data.message = 'guessed correctly'
-                        room.guessedCount += 1;
-                        if(room.guessedCount < 2){
-                            let timeDelta = Date.now() - room.startingTIme;
-                            let gap = roundTimer - timeDelta;
-                            setChangeDrawerCallback(roomId, gap / 2);
-                            io.to(roomId).emit('setTimer', {
-                                time : gap / 2
-                            })
-                        }
-                        // emitPlayers(roomId);
-                        break;
+                let index = getIndex(room.members, {socketId : socket.id}, groupMemberComp);
+                if(index < 0) return;
+                let member = room.members[index];
+                if(!member.hasGuessed){
+                    let timeDelta = Date.now() - room.startingTIme;
+                    let gap = roundTimer - timeDelta;
+                    member.score += getScore(gap);
+                    member.turnScore = getScore(gap);
+                    member.hasGuessed = true;
+                    data.message = 'guessed correctly'
+                    room.guessedCount += 1;
+                    if(room.guessedCount === room.members.length){
+                        return setChangeDrawerCallback(roomId, 1);
                     }
-                }
+                    if(room.guessedCount < 2){
+                        setChangeDrawerCallback(roomId, gap / 2);
+                        io.to(roomId).emit('setTimer', {
+                            time : gap / 2
+                        })
+                    }
+                }   
+                    
             }
             io.in(roomId).emit('message', {
                 message : data.message, 
