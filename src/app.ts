@@ -146,6 +146,9 @@ function endRound(room : Room.room, roomId : string){
 
 
 function endTurn(room : Room.room, roomId : string){
+    let index = getIndex(room.members, {socketId : room.drawer}, groupMemberComp);
+    room.members[index].turnScore = room.guessedCount > 0 ? Math.floor(60 * Math.exp(1.8 * ((room.guessedCount)/ (room.members.length + 1)))) : 0;
+    room.members[index].score += room.members[index].turnScore;
     io.to(roomId).emit('turnEnd',{
         members : room.members
     });
@@ -218,7 +221,6 @@ function startGame(room : Room.room, roomId : string){
 
 
 function changeDrawer(roomId : string, turnId : string){
-    console.log("change drawer");
     try{
         const room = Room.roomMap[roomId];
         if(turnId != room.turnId) return;
@@ -227,16 +229,13 @@ function changeDrawer(roomId : string, turnId : string){
         if(!room.drawer){
             return startGame(room, roomId);
         }
-        console.log('here');
         let index = getIndex(room.members, {socketId : room.drawer}, groupMemberComp);
         if(index == 0){
             if(room.round === room.maxRounds){
                 endTurn(room, roomId);
                 setTimeout(()=>{
                     EndGame(room, roomId);
-
                 }, delayAfterRoundEnd);
-                EndGame(room, roomId);
                 return setChangeDrawerCallback(roomId, delayAfterGameEnd);
             }
             endRound(room, roomId);
@@ -271,6 +270,7 @@ function onJoinMidGame(socket : Socket, roomId : string, room : Room.room){
 
 function addToRoom(socket : Socket, roomId : string, userName : string){
     socket.join(roomId);
+    
     const room = Room.roomMap[roomId];
     room.members.push({ socketId : socket.id, userName : userName, score : 0, hasGuessed : false, turnScore : 0});
     Room.socketToRoomIdMap[socket.id] = roomId;
@@ -335,7 +335,10 @@ io.on('connection',(socket)=>{
         console.log('adding to room');
         addToRoom(socket, roomId, userName);
     }   
-
+    io.to(socket.id).emit('user', {
+        user : Room.socketToInfoMap[socket.id]
+    })
+    
     socket.on('drawerImageData', (data : drawerImageData)=>{
         if(Room.roomMap[Room.socketToRoomIdMap[socket.id]].members.some( m => m.socketId === data.to)){
             io.to(data.to).emit('drawerImageData', data);
